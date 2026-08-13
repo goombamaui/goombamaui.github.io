@@ -255,7 +255,16 @@ async function runOptimizer(profession, levelMin, levelMax, matTiers, formulaTex
 
     const top = new TopResultsJs();
 
-    const YIELD_EVERY = 200;
+    // Yield by ELAPSED TIME, not a fixed unit count: a `setTimeout(0)` is clamped to ~4ms by
+    // browsers, so yielding every 200 units (the old fixed count) paid that ~4ms tax up to
+    // totalUnits/200 times regardless of how cheap those units actually were - for a
+    // multi-million-unit search that tax alone was seconds to minutes of pure overhead, on top
+    // of running single-threaded. Checking elapsed time instead means we only pay it as often as
+    // needed to keep the tab responsive (~every 50ms of real work), the same "throttle to a real
+    // cost, not a naive count" idea CraftOptimizerRunner's ProgressSink applies to progress
+    // reporting - just applied here to the yield itself.
+    const YIELD_INTERVAL_MS = 50;
+    let lastYield = performance.now();
     for (let unitIdx = 0; unitIdx < totalUnits; unitIdx++) {
         let k = 0;
         while (unitIdx >= unitsBeforeK[k + 1]) k++;
@@ -295,9 +304,11 @@ async function runOptimizer(profession, levelMin, levelMax, matTiers, formulaTex
             }
         }
 
-        if (unitIdx % YIELD_EVERY === 0) {
+        const now = performance.now();
+        if (now - lastYield >= YIELD_INTERVAL_MS) {
             counts(unitIdx, totalUnits);
             await new Promise(r => setTimeout(r, 0));
+            lastYield = performance.now();
         }
     }
 
