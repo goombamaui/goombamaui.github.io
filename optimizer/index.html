@@ -93,7 +93,85 @@
             <div class="row row-cols-1 gy-5">
                 <div class="col text-center">
                     <h1>WynnOptimizer</h1>
-                    <p class="scaled-font">Coming soon &mdash; automatic ingredient placement optimization for crafted items.</p>
+                    <p class="scaled-font">Automatic ingredient placement optimization for crafted items.</p>
+                </div>
+            </div>
+            <div class="row row-cols-1 row-cols-lg-3 gy-5">
+                <div class="col col-lg-5">
+                    <div class="row row-cols-1 gx-5 gy-4 gy-lg-2">
+                        <div class="col">
+                            <div class="row dark-shadow dark-5 rounded py-2 align-items-center">
+                                <div class="col-4 px-0 ps-2">
+                                    <label class="mb-0 scaled-font fw-bold" for="opt-recipe-choice">Recipe:</label>
+                                </div>
+                                <div class="col-8 px-0 pe-2">
+                                    <select class="border-dark text-light dark-10 rounded scaled-font form-select form-select-sm" id="opt-recipe-choice"></select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="row dark-shadow dark-6 rounded py-2 align-items-center">
+                                <div class="col-4 px-0 ps-2">
+                                    <label class="mb-0 scaled-font fw-bold" for="opt-mat-1-tier">Mat 1 Tier:</label>
+                                </div>
+                                <div class="col-8 px-0 pe-2">
+                                    <select class="border-dark text-light dark-10 rounded scaled-font form-select form-select-sm" id="opt-mat-1-tier">
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                        <option value="3" selected>3</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="row dark-shadow dark-6 rounded py-2 align-items-center">
+                                <div class="col-4 px-0 ps-2">
+                                    <label class="mb-0 scaled-font fw-bold" for="opt-mat-2-tier">Mat 2 Tier:</label>
+                                </div>
+                                <div class="col-8 px-0 pe-2">
+                                    <select class="border-dark text-light dark-10 rounded scaled-font form-select form-select-sm" id="opt-mat-2-tier">
+                                        <option value="1">1</option>
+                                        <option value="2">2</option>
+                                        <option value="3" selected>3</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="row dark-shadow dark-6 rounded py-2">
+                                <div class="col px-2">
+                                    <label class="mb-1 scaled-font fw-bold" for="opt-constraints">Constraints (comma-separated):</label>
+                                    <textarea class="border-dark text-light dark-10 rounded scaled-font form-control form-control-sm" id="opt-constraints" rows="3" placeholder="durability>=100, 3*hpr + mr <= 40"></textarea>
+                                    <div class="scaled-font text-danger" id="opt-constraints-error"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="row dark-shadow dark-6 rounded py-2">
+                                <div class="col px-2">
+                                    <label class="mb-1 scaled-font fw-bold" for="opt-formula">Objective formula:</label>
+                                    <input class="border-dark text-light dark-10 rounded scaled-font form-control form-control-sm" id="opt-formula" type="text" placeholder="hpr% * hpr + 0.5 * sdRaw"/>
+                                    <div class="scaled-font text-danger" id="opt-formula-error"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="row rounded dark-shadow dark-6 p-2 align-items-center justify-content-center">
+                                <div class="col-auto mx-auto">
+                                    <button class="button rounded scaled-font fw-bold text-light dark-5" id="opt-run-button" onclick="runOptimizerFromForm()">Run</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <div class="progress" id="opt-progress-container" style="display:none;">
+                                <div class="progress-bar" id="opt-progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                            </div>
+                            <div class="scaled-font" id="opt-progress-message"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col col-lg-7">
+                    <div class="row row-cols-1 gy-3" id="opt-results"></div>
                 </div>
             </div>
             <div class="row my-2">
@@ -115,5 +193,148 @@
         <script type="text/javascript" src="../js/build_utils.js"></script>
         <script type="text/javascript" src="../js/icons.js"></script>
         <script type="text/javascript" src="../js/loader.js"></script>
+        <script type="text/javascript" src="../js/load_item.js"></script>
+        <script type="text/javascript" src="../js/load_ing.js"></script>
+        <script type="text/javascript" src="../js/craft.js"></script>
+        <script type="text/javascript" src="../js/optimizer_grammar.js"></script>
+        <script type="text/javascript" src="../js/optimizer_dp.js"></script>
+        <script type="text/javascript" src="../js/optimizer.js"></script>
+        <script type="text/javascript">
+            /**
+             * GUI wiring for the Optimizer tab - populates the recipe select once
+             * ingredient_loader.load_init() resolves (matching crafter/index.html's own load-then-populate
+             * pattern), runs the search on button click, and renders the top-3 results panel. See
+             * docs/design/craft-optimizer-js-port.md §3.
+             */
+            function populateRecipeChoices() {
+                const select = document.getElementById("opt-recipe-choice");
+                select.innerHTML = "";
+                for (const name of recipeList) {
+                    const opt = document.createElement("option");
+                    opt.value = name;
+                    opt.textContent = name;
+                    select.appendChild(opt);
+                }
+            }
+
+            function setProgress(unitIdx, totalUnits) {
+                const container = document.getElementById("opt-progress-container");
+                const bar = document.getElementById("opt-progress-bar");
+                container.style.display = "";
+                const pct = totalUnits > 0 ? Math.min(100, Math.floor((unitIdx / totalUnits) * 100)) : 0;
+                bar.style.width = pct + "%";
+                bar.setAttribute("aria-valuenow", String(pct));
+            }
+
+            function renderResults(results) {
+                const container = document.getElementById("opt-results");
+                container.innerHTML = "";
+                if (results.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "col scaled-font text-center";
+                    empty.textContent = "No feasible craft found.";
+                    container.appendChild(empty);
+                    return;
+                }
+                results.forEach((result, i) => {
+                    const card = document.createElement("div");
+                    card.className = "col rounded dark-6 text-light scaled-font p-3 border-dark dark-shadow";
+
+                    const title = document.createElement("h5");
+                    title.textContent = `#${i + 1} - score ${result.score.toFixed(2)}`;
+                    card.appendChild(title);
+
+                    const grid = document.createElement("div");
+                    grid.className = "row row-cols-2 gy-1";
+                    for (let slot = 0; slot < 6; slot++) {
+                        const cell = document.createElement("div");
+                        cell.className = "col scaled-font";
+                        const name = result.ingredientNames[slot];
+                        cell.textContent = `Slot ${slot + 1}: ${name && name !== "<empty>" ? name : "(empty)"} `
+                            + `(eff ${result.effectivenessPerSlot[slot]}%)`;
+                        grid.appendChild(cell);
+                    }
+                    card.appendChild(grid);
+
+                    const table = document.createElement("table");
+                    table.className = "table table-dark table-sm scaled-font mt-2";
+                    const thead = document.createElement("thead");
+                    thead.innerHTML = "<tr><th>Stat</th><th>Min</th><th>Max</th></tr>";
+                    table.appendChild(thead);
+                    const tbody = document.createElement("tbody");
+                    for (const [stat, range] of result.statRanges) {
+                        const row = document.createElement("tr");
+                        row.innerHTML = `<td>${stat}</td><td>${range[0]}</td><td>${range[1]}</td>`;
+                        tbody.appendChild(row);
+                    }
+                    table.appendChild(tbody);
+                    card.appendChild(table);
+
+                    container.appendChild(card);
+                });
+            }
+
+            async function runOptimizerFromForm() {
+                const constraintsError = document.getElementById("opt-constraints-error");
+                const formulaError = document.getElementById("opt-formula-error");
+                const messageEl = document.getElementById("opt-progress-message");
+                const runButton = document.getElementById("opt-run-button");
+                constraintsError.textContent = "";
+                formulaError.textContent = "";
+                messageEl.textContent = "";
+
+                const recipeName = document.getElementById("opt-recipe-choice").value;
+                const recipe = recipeMap.get(recipeName);
+                if (!recipe) {
+                    constraintsError.textContent = "Select a recipe first.";
+                    return;
+                }
+                const profession = recipe.skill;
+                const levelMin = recipe.lvl.minimum;
+                const levelMax = recipe.lvl.maximum;
+                const matTiers = [
+                    parseInt(document.getElementById("opt-mat-1-tier").value, 10),
+                    parseInt(document.getElementById("opt-mat-2-tier").value, 10),
+                ];
+
+                const constraintsText = document.getElementById("opt-constraints").value;
+                const formulaText = document.getElementById("opt-formula").value;
+
+                let constraintStrings;
+                try {
+                    constraintStrings = splitConstraintList(constraintsText.trim()).map(s => s.trim()).filter(s => s !== "");
+                    for (const c of constraintStrings) parseConstraint(c); // validate up front
+                } catch (e) {
+                    constraintsError.textContent = e.message;
+                    return;
+                }
+                try {
+                    parseFormula(formulaText);
+                } catch (e) {
+                    formulaError.textContent = e.message;
+                    return;
+                }
+
+                runButton.disabled = true;
+                document.getElementById("opt-progress-container").style.display = "";
+                setProgress(0, 1);
+                try {
+                    const results = await runOptimizer(profession, levelMin, levelMax, matTiers, formulaText,
+                        constraintStrings,
+                        (msg) => { messageEl.textContent = msg; },
+                        (unitIdx, totalUnits) => { setProgress(unitIdx, totalUnits); });
+                    renderResults(results);
+                } catch (e) {
+                    messageEl.textContent = "Error: " + e.message;
+                } finally {
+                    runButton.disabled = false;
+                }
+            }
+
+            (async function() {
+                await ingredient_loader.load_init();
+                populateRecipeChoices();
+            })();
+        </script>
     </body>
 </html>
