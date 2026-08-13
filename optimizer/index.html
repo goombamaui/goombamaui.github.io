@@ -13,6 +13,7 @@
     <link href="/thirdparty/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
 
     <link rel="stylesheet" href="/thirdparty/autoComplete.min.css">
+    <script type="text/javascript" src="/thirdparty/autoComplete.min.js"></script>
 
 
     <link rel="stylesheet" href="../css/sq2bs.css">
@@ -289,6 +290,64 @@
                 return recipeMap.get(name) || null;
             }
 
+            /**
+             * Stat-identifier autocomplete for #opt-constraints/#opt-formula - suggests from
+             * knownStatNames() only while the cursor sits at a legal identifier-start position
+             * (identifierPositionAt, js/optimizer_grammar.js), and splices the chosen suggestion
+             * into just that identifier's span instead of replacing the whole field (unlike every
+             * other autoComplete usage on this site, these two fields hold multi-token
+             * expressions, not single values). See notes/optimizer-autocomplete-design.md.
+             */
+            function initStatAutocomplete(inputEl, grammar) {
+                new autoComplete({
+                    data: {
+                        src: () => Array.from(knownStatNames()),
+                    },
+                    query: () => {
+                        const pos = identifierPositionAt(inputEl.value, inputEl.selectionStart, grammar);
+                        return pos ? inputEl.value.slice(pos.start, pos.end) : "";
+                    },
+                    trigger: () => identifierPositionAt(inputEl.value, inputEl.selectionStart, grammar) !== null,
+                    selector: () => inputEl,
+                    wrapper: false,
+                    resultsList: {
+                        maxResults: 100,
+                        tabSelect: true,
+                        noResults: true,
+                        class: "search-box dark-7 rounded-bottom px-2 fw-bold dark-shadow-sm",
+                        element: (list, data) => {
+                            const position = inputEl.getBoundingClientRect();
+                            list.style.top = position.bottom + window.scrollY + "px";
+                            list.style.left = position.x + "px";
+                            list.style.width = position.width + "px";
+                            list.style.maxHeight = position.height * 4 + "px";
+                            if (!data.results.length) {
+                                const message = make_elem('li', ['scaled-font'], { textContent: "No results found!" });
+                                list.prepend(message);
+                            }
+                        },
+                    },
+                    resultItem: {
+                        class: "scaled-font search-item",
+                        selected: "dark-5",
+                    },
+                    events: {
+                        input: {
+                            selection: (event) => {
+                                const pos = identifierPositionAt(inputEl.value, inputEl.selectionStart, grammar);
+                                if (!pos || !event.detail.selection.value) return;
+                                const chosen = event.detail.selection.value;
+                                const v = inputEl.value;
+                                inputEl.value = v.slice(0, pos.start) + chosen + v.slice(pos.end);
+                                const caret = pos.start + chosen.length;
+                                inputEl.setSelectionRange(caret, caret);
+                                inputEl.focus();
+                            },
+                        },
+                    },
+                });
+            }
+
             let optSearchStartMs = 0;
 
             function setProgress(unitIdx, totalUnits) {
@@ -413,6 +472,8 @@
                 await ingredient_loader.load_init();
                 populateRecipeChoices();
                 document.getElementById("recipe-choice").addEventListener("input", updateCraftedImage);
+                initStatAutocomplete(document.getElementById("opt-constraints"), "constraint");
+                initStatAutocomplete(document.getElementById("opt-formula"), "formula");
             })();
         </script>
     </body>

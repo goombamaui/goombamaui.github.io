@@ -35,6 +35,96 @@ function knownStatNames() {
     return s;
 }
 
+// ---- identifier-position detection (autocomplete gating) ---------------------------------------
+//
+// Minimal "is the cursor at a place a stat identifier can legally start" predicate, used only to
+// gate the #opt-constraints/#opt-formula autocomplete popups - NOT a full syntax highlighter (see
+// docs/design/craft-optimizer-js-port.md §3, which explicitly scoped these two fields as plain
+// inputs). Mirrors wynnmacro's ConstraintTokenizer.statNameExpectedAt / FormulaTokenizer.
+// statNameExpectedAt: find the token the cursor is inside/at-the-end-of, walk back to the nearest
+// token ending at-or-before that position, and check its kind against a small per-grammar
+// allow-list.
+
+/**
+ * Lexes just enough of a constraint-textarea line to find token boundaries for
+ * identifierPositionAt - same character classes as parseTerms/splitConstraintList, but keeping
+ * every token (not discarding structure) since position detection needs the immediately-preceding
+ * token's kind.
+ */
+function tokenizeConstraintLine(source) {
+    const tokens = [];
+    let i = 0;
+    const n = source.length;
+    while (i < n) {
+        const c = source[i];
+        if (/\s/.test(c)) { i++; continue; }
+        const start = i;
+        if (c === ',') { tokens.push({ type: 'COMMA', pos: start, end: start + 1 }); i++; }
+        else if (c === '(') { tokens.push({ type: 'LPAREN', pos: start, end: start + 1 }); i++; }
+        else if (c === ')') { tokens.push({ type: 'RPAREN', pos: start, end: start + 1 }); i++; }
+        else if (c === '+') { tokens.push({ type: 'PLUS', pos: start, end: start + 1 }); i++; }
+        else if (c === '-') { tokens.push({ type: 'MINUS', pos: start, end: start + 1 }); i++; }
+        else if (c === '*') { tokens.push({ type: 'STAR', pos: start, end: start + 1 }); i++; }
+        else if (c === '>' || c === '<') {
+            if (i + 1 < n && source[i + 1] === '=') { tokens.push({ type: 'CMP', pos: start, end: start + 2 }); i += 2; }
+            else { tokens.push({ type: 'CMP', pos: start, end: start + 1 }); i++; }
+        } else if (/[0-9.]/.test(c)) {
+            while (i < n && /[0-9.]/.test(source[i])) i++;
+            tokens.push({ type: 'NUMBER', pos: start, end: i });
+        } else if (/[A-Za-z_]/.test(c)) {
+            while (i < n && isIdentChar(source[i])) i++;
+            tokens.push({ type: 'IDENT', pos: start, end: i });
+        } else {
+            i++; // unrecognized character (mid-typed garbage) - skip as unknown, don't loop forever
+        }
+    }
+    return tokens;
+}
+
+/** Per-grammar "prev token kind implies an identifier can start here" allow-lists. */
+const CONSTRAINT_IDENT_PREV_OK = new Set(['COMMA', 'LPAREN', 'PLUS', 'MINUS', 'STAR']);
+const FORMULA_IDENT_PREV_OK = new Set(['LPAREN', 'PLUS', 'MINUS']); // no STAR: FormulaTokenizer's own list omits it
+
+/**
+ * Returns `{start, end}` spanning the identifier run the cursor is inside/at-the-end-of if the
+ * cursor sits at a legal identifier-start position for `grammar` ('constraint' or 'formula'),
+ * else `null`. `start === end` when the cursor is at a position with no partial identifier typed
+ * yet (still a valid trigger point, just an empty replace-span).
+ */
+function identifierPositionAt(text, cursor, grammar) {
+    let tokens;
+    if (grammar === 'formula') {
+        try {
+            tokens = tokenizeFormula(text)
+                .filter(t => t.type !== 'EOF')
+                .map(t => ({ type: t.type, pos: t.pos, end: t.pos + t.text.length }));
+        } catch (e) {
+            // Mid-typed garbage (e.g. a stray '%' or '#') - tokenizeFormula throws on the first
+            // unrecognized character instead of skipping it, unlike tokenizeConstraintLine. Treat
+            // as "not an identifier position" rather than letting the autocomplete wiring throw.
+            return null;
+        }
+    } else {
+        tokens = tokenizeConstraintLine(text);
+    }
+    const allowList = grammar === 'formula' ? FORMULA_IDENT_PREV_OK : CONSTRAINT_IDENT_PREV_OK;
+
+    let containing = null;
+    for (const t of tokens) {
+        if (t.type === 'IDENT' && cursor >= t.pos && cursor <= t.end) { containing = t; break; }
+    }
+    const checkPos = containing ? containing.pos : cursor;
+
+    let prev = null;
+    for (const t of tokens) {
+        if (t.end <= checkPos) prev = t;
+        else break;
+    }
+    const ok = prev === null || allowList.has(prev.type);
+    if (!ok) return null;
+    return containing ? { start: containing.pos, end: containing.end } : { start: cursor, end: cursor };
+}
+
 // ---- objective formula grammar -----------------------------------------------------------------
 //
 // expr    := term (('+' | '-') term)*
